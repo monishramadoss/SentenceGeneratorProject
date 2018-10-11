@@ -58,7 +58,7 @@ def preProcessTask(Data, title, Max_val):
         if(Max_val < len(context)):
             Max_val = len(context)
         qas = paragraphs[context_qas]['qas']
-        Context = torch.zeros(600, 300)
+        Context = torch.zeros(800, 300)
         for x in range(len(context)):
             Context[x] = get_glove_vec(context[x])        
         for qa in range(len(qas)):
@@ -70,13 +70,17 @@ def preProcessTask(Data, title, Max_val):
                 answer_text = answers[ans]['text'].split(r' ')
                 for x in range(len(answer_text)):
                     Answer[x] = get_glove_vec(answer_text[x])
-                Output.append(torch.cat((Context, Answer), dim=0))
-    return Output
-                
-
+                Tmp = torch.cat((Context, Answer), dim=0).unsqueeze(0)
+                Output.append(Tmp)
+    if(len(Output) != 0):
+        result = torch.cat(Output, dim=0)
+        return (result, True) 
+    else:
+        return (None, False)
+   
 def preprocess():
     
-    TrainData = json.load(open(SquadTrainJson))
+    TrainData = json.load(open(SquadTrainJson))          
     TestData = json.load(open(SquadTestJson))
 
     td = TrainData['data'][0]['paragraphs'][0]['qas']
@@ -87,8 +91,17 @@ def preprocess():
 
     Output = list()
     for title in range(len(TrainData['data'])):
-       Output.append(preProcessTask(TrainData, title, Max_val))
-                    
+       tmp, Flag = preProcessTask(TrainData, title, Max_val)
+       if(Flag):
+           Output.append(tmp)
+
+    Output = torch.tensor(torch.cat(Output, dim=0))
+
+    
+    nparray = Output.numpy()
+    np.savetxt('./TrainData.gz', nparray)
+   
+
     print()
 
 def train():
