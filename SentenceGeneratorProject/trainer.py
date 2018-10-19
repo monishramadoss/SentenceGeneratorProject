@@ -73,57 +73,78 @@ def preProcessTask(Data, title, Max_val):
     for context_qas in range(len(paragraphs)):
         Tags = torch.zeros(800,36)
         Context = torch.zeros(800, 300)
-        
-        context =  nltk.word_tokenize(paragraphs[context_qas]['context'])
+        ctx = paragraphs[context_qas]['context']
+        ctx_sents = ctx.split(r'.')
+        context =  nltk.word_tokenize(ctx)
         for x in range(len(context)):
-            Context[x] = get_glove_vec(context[x])        
-        
+            Context[x] = get_glove_vec(context[x])                
         t = nltk.pos_tag(context)
         tagged = [tags[x[1]] if x[1] in tags.keys() else 36 for x in nltk.pos_tag(context)  ]        
-        nerResult = nltk.ne_chunk(nltk.pos_tag(context))
-   
-        bioTagged = list()
-        prevTag = 0
-
-        for t in nerResult:
-            if(type(t) == nltk.tree):
-                if tag == 0: #O
-                    bioTagged.append(0)
-                    prev_tag = tag
-                if tag != 0 and prev_tag == "O": # Begin NE
-                    bioTagged.append(2)
-                    prev_tag = tag
-                elif prev_tag != 0 and prev_tag == tag: # Inside NE
-                    bioTagged.append(1)
-                    prev_tag = tag
-                elif prev_tag != 0 and prev_tag != tag: # Adjacent NE
-                    bioTagged.append(2)
-                    prev_tag = tag
-            
+        
         for x in range(len(tagged)):
             tmp = tagged[x]
             if(tmp != 36 ):
                 Tags[x][tmp] = 1
-        Context = torch.cat((Context, Tags), dim=1)        
 
+        nerResult = nltk.ne_chunk(nltk.pos_tag(context))
+        bioTagged = list()
+        prevTag = 0
+
+       
+            
+        Context = torch.cat((Context,Tags), dim=0)
+        
         if(Max_val < len(context)):
             Max_val = len(context)
 
         qas = paragraphs[context_qas]['qas']
         for qa in range(len(qas)):
-            question = qas[qa]['question']
+            Question = torch.zeros(64,300)
+            Tags = torch.zeros(64,36)
+
+            question = nltk.word_tokenize(qas[qa]['question'])
+            tagged = [tags[x[1]] if x[1] in tags.keys() else 36 for x in nltk.pos_tag(question)  ]        
+
+            for x in range(len(question)):
+                Question[x] = get_glove_vec(question[x])                
+                    
+            for x in range(len(tagged)):
+                tmp = tagged[x]
+                if(tmp != 36 ):
+                    Tags[x][tmp] = 1
+            
+            Question = torhch.cat((Question, Tags), dim=0)
+
             answers = qas[qa]['answers']
             imposobru = qas[qa]['is_impossible']
+            sentence = ""
+            Sentence = torch.zeros(64,300)
+            Tags = torch.zeros(64,36)
             if(not imposobru):
                 for ans in range(len(answers)):
                     Answer = torch.zeros(64,300)
                     answer_start = answers[ans]['answer_start']
                     answer_text = answers[ans]['text'].split(r' ')
-                    answer_end = len(answers[ans]['text']) - 1
+                    
+                    for sent in ctx_sents:
+                        if(answer_text in sent):
+                            sentence = nltk.word_tokenize(sent)
+                            for x in range(len(sentence)):
+                                Sentence = get_glove_vec(sentence[x])
+                            tagged = [tags[x[1]] if x[1] in tags.keys() else 36 for x in nltk.pos_tag(sentence)]    
+                            for x in range(len(tagged)):
+                                tmp = tagged[x]
+                                if(tmp != 36):
+                                    Tags[x][tmp] = 1
+                                    
+                                
+                            break 
+
                     for x in range(len(answer_text)):
                         Answer[x] = get_glove_vec(answer_text[x])
-                    #Tmp = torch.cat((Context, Answer), dim=0).unsqueeze(0)
-                    #Output.append(Tmp)
+                    
+                    Output.append((Context, Question, Answer))
+
     if(not imposobru):
         result = torch.cat(Output, dim=0)
         return (result, True) 
