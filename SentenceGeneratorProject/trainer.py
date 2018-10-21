@@ -21,6 +21,8 @@ import numpy as np
 import json
 from multiprocessing import Pool, Queue
 import urllib.request
+import csv
+
 parser = main.parser
 GeneratorDevice = main.GeneratorDevice
 DiscriminatorDevice = main.DiscriminatorDevice
@@ -157,34 +159,64 @@ def preProcessTask(Data, title, Max_val):
                             Answer[x] = get_glove_vec(answer_text[x])                      
                         except:
                             break
-                    Output.append((Context, Sentence, Question, Answer))
-    
-    if(imposobru == False):
-        return (Output, False)
-    else:
-        return (None, True)
-   
+                    if(Sentence.shape[1] == 336 ):
+                        Output.append((Context, Sentence, Question, Answer))    
+
+    return (Output, imposobru)
+
 def preprocess():
     
     TrainData = json.load(open(SquadTrainJson))          
     TestData = json.load(open(SquadTestJson))
-
     td = TrainData['data'][0]['paragraphs'][0]['qas']
-    p = Pool(1)    
-    #args = [(TrainData, title, Max_val) for title in range(len(TrainData['data']))]      
-    #Output = p.starmap(preProcessTask, args)
-    #p.join()
-
-    Output = list()
-    for title in range(len(TrainData['data'])):
-       tmp, Flag = preProcessTask(TrainData, title, Max_val)
-       if(Flag):
-           Output.append(tmp)
     
-    return Output    
+    Context_Stack = list()
+    Sentence_Stack = list()
+    Question_Stack = list()
+    Answer_Stack = list()
+    
+    for title in range(len(TrainData['data'])):
+        tmp, Flag = preProcessTask(TrainData, title, Max_val)
+        if(not Flag):
+            for x in range(len(tmp)):            
+                Context_Stack.append(tmp[x][0])
+                Sentence_Stack.append(tmp[x][1])
+                Question_Stack.append(tmp[x][2])
+                Answer_Stack.append(tmp[x][3])                
+            lens = len(Context_Stack)
+    Context_Stack = torch.stack(Context_Stack)         
+    Sentence_Stack = torch.stack(Sentence_Stack)
+    Question_Stack = torch.stack(Question_Stack)
+    Answer_Stack = torch.stack(Answer_Stack)
+    
+    torch.save(Context_Stack,'./Dataset/Context.pt')
+    torch.save(Sentence_Stack, './Dataset/Sentence.pt')
+    torch.save(Question_Stack, './Dataset/Question.pt')
+    torch.save(Answer_Stack,  './Dataset/Answer.pt',)
+
+    return
+
+
+class SquadDataVecDataset(torch.utils.data.Dataset):
+    def __init__(self):
+        if(not os.path.exists('./Dataset/Context.pt') or not os.path.exists('./Dataset/Sentence.pt') or not os.path.exists('./Dataset/Question.pt') or not os.path.exists('./Dataset/Answer.pt')):
+            preprocess()
+
+        self.context = torch.load('./Dataset/Context.pt')
+        self.sentence = torch.load('./Dataset/Sentence.pt')
+        self.question = torch.load('./Dataset/Question.pt')
+        self.answer = torch.load('./Dataset/Answer.pt')
+
+    def __getitem__(self, idx):
+        return self.context, self.sentence, self.question, self.answer
+
+    def __len__(self):
+        return self.length
+
 
 def train():
-    preprocess()
+    dataset = SquadDataVecDataset()
+    return
     
 
 def test():
