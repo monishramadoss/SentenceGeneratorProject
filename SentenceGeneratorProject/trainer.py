@@ -1,7 +1,7 @@
 import torch
 import progressbar
 import torch.nn as nn
-import torch.optim as optim
+import torch.optim as ophim
 import torch.nn.init as init
 import torch.nn.functional as F
 from nltk.tag import StanfordNERTagger
@@ -22,6 +22,7 @@ import json
 from multiprocessing import Pool, Queue
 import urllib.request
 import csv
+from model import SentenceGenerator
 
 parser = main.parser
 GeneratorDevice = main.GeneratorDevice
@@ -63,6 +64,7 @@ def get_glove_vec(word):
         return glove.vectors[glove.stoi[word]]
     except:
         return torch.zeros(300)
+
 
 def get_word_from_vec(vec, n=10):
     all_dists = [(w,torch.dist(vec, get_glove_vec(w))) for w in glove.itos]
@@ -184,30 +186,36 @@ def preprocess():
                 Question_Stack.append(tmp[x][2])
                 Answer_Stack.append(tmp[x][3])                
             lens = len(Context_Stack)
+
     Context_Stack = torch.stack(Context_Stack)         
     Sentence_Stack = torch.stack(Sentence_Stack)
     Question_Stack = torch.stack(Question_Stack)
     Answer_Stack = torch.stack(Answer_Stack)
     
-    torch.save(Context_Stack,'./Dataset/Context.pt')
-    torch.save(Sentence_Stack, './Dataset/Sentence.pt')
-    torch.save(Question_Stack, './Dataset/Question.pt')
-    torch.save(Answer_Stack,  './Dataset/Answer.pt',)
+    Context_Stack = Context_Stack.numpy()
+    Sentence_Stack = Sentence_Stack.numpy()
+    Question_Stack = Question_Stack.numpy()
+    Answer_Stack = Answer_Stack.numpy()
 
-    return
+    np.save("./Dataset/Context.npy", Context_Stack)
+    np.save("./Dataset/Sentence.npy", Sentence_Stack)
+    np.save("./Dataset/Question.npy", Question_Stack)
+    np.save("./Dataset/Answer.npy", Answer_Stack)
 
+    
 
 class SquadDataVecDataset(torch.utils.data.Dataset):
     def __init__(self):
-        if(not os.path.exists('./Dataset/Context.pt') or not os.path.exists('./Dataset/Sentence.pt') or not os.path.exists('./Dataset/Question.pt') or not os.path.exists('./Dataset/Answer.pt')):
+        if(not os.path.exists('./Dataset/Context.npy') or not os.path.exists('./Dataset/Sentence.npy') or not os.path.exists('./Dataset/Question.npy') or not os.path.exists('./Dataset/Answer.npy')):
             preprocess()
 
-        self.context = torch.load('./Dataset/Context.pt')
-        self.sentence = torch.load('./Dataset/Sentence.pt')
-        self.question = torch.load('./Dataset/Question.pt')
-        self.answer = torch.load('./Dataset/Answer.pt')
+        self.sentence = torch.from_numpy(np.load('./Dataset/Sentence.npy'))
+        self.question = torch.from_numpy(np.load('./Dataset/Question.npy'))
+        self.answer = torch.from_numpy(np.load('./Dataset/Answer.npy'))
+        self.context = torch.from_numpy(np.load('./Dataset/Context.npy'))
 
     def __getitem__(self, idx):
+        self.length = self.question.shape[0]
         return self.context, self.sentence, self.question, self.answer
 
     def __len__(self):
@@ -216,6 +224,16 @@ class SquadDataVecDataset(torch.utils.data.Dataset):
 
 def train():
     dataset = SquadDataVecDataset()
+    TrainDataLoader = torch.utils.data.DataLoader(dataset, batch_size=64, shuffle=True)
+    content_criterion = nn.MSELoss()
+    model = SentenceGenerator()
+
+    for epoch in range(10):
+        for i, data in enumerate(TrainDataLoader):
+            input = data
+
+
+
     return
     
 
