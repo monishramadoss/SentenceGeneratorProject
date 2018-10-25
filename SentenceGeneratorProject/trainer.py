@@ -8,11 +8,6 @@ from nltk.tag import StanfordNERTagger
 from torchtext import vocab
 import nltk
 
-nltk.download('averaged_perceptron_tagger')
-nltk.download('tagsets')
-nltk.download('punkt')
-nltk.download('maxent_ne_chunker')
-nltk.download('words')
 
 import main
 import sys
@@ -41,10 +36,11 @@ gan = args.gan
 tileData = args.tileData
 validateData = args.validateData
 testData = args.testData
-
 dtype = torch.float32
 Max_val = 0
 glove = vocab.GloVe(name='840B', dim=300)
+Output = Queue()
+
 
 SquadTrainJson = './Dataset/train-v2.0.json'
 SquadTestJson = './Dataset/dev-v2.0.json'
@@ -72,7 +68,6 @@ def get_word_from_vec(vec, n=10):
 
 def preProcessTask(Data, title, Max_val):
     TData = Data['data'][title]
-    title  = TData['title']
     paragraphs = TData['paragraphs']
     Output = list()
     imposobru = False
@@ -166,64 +161,90 @@ def preProcessTask(Data, title, Max_val):
 
     return (Output, imposobru)
 
-def preprocess():
-    
-    TrainData = json.load(open(SquadTrainJson))          
-    TestData = json.load(open(SquadTestJson))
-    td = TrainData['data'][0]['paragraphs'][0]['qas']
-    
-    Context_Stack = list()
-    Sentence_Stack = list()
-    Question_Stack = list()
-    Answer_Stack = list()
-    
-    for title in range(len(TrainData['data'])):
-        tmp, Flag = preProcessTask(TrainData, title, Max_val)
-        if(not Flag):
-            for x in range(len(tmp)):            
-                Context_Stack.append(tmp[x][0])
-                Sentence_Stack.append(tmp[x][1])
-                Question_Stack.append(tmp[x][2])
-                Answer_Stack.append(tmp[x][3])                
-            lens = len(Context_Stack)
-
-    Context_Stack = torch.stack(Context_Stack)         
-    Sentence_Stack = torch.stack(Sentence_Stack)
-    Question_Stack = torch.stack(Question_Stack)
-    Answer_Stack = torch.stack(Answer_Stack)
-    
-    Context_Stack = Context_Stack.numpy()
-    Sentence_Stack = Sentence_Stack.numpy()
-    Question_Stack = Question_Stack.numpy()
-    Answer_Stack = Answer_Stack.numpy()
-
-    np.save("./Dataset/Context.npy", Context_Stack)
-    np.save("./Dataset/Sentence.npy", Sentence_Stack)
-    np.save("./Dataset/Question.npy", Question_Stack)
-    np.save("./Dataset/Answer.npy", Answer_Stack)
-
-    
 
 class SquadDataVecDataset(torch.utils.data.Dataset):
-    def __init__(self):
-        if(not os.path.exists('./Dataset/Context.npy') or not os.path.exists('./Dataset/Sentence.npy') or not os.path.exists('./Dataset/Question.npy') or not os.path.exists('./Dataset/Answer.npy')):
-            preprocess()
-
-        self.sentence = torch.from_numpy(np.load('./Dataset/Sentence.npy'))
-        self.question = torch.from_numpy(np.load('./Dataset/Question.npy'))
-        self.answer = torch.from_numpy(np.load('./Dataset/Answer.npy'))
-        self.context = torch.from_numpy(np.load('./Dataset/Context.npy'))
-
+    def __init__(self, filename):
+        self.Data = json.load(open(filename))       
+        for x in range(len(self.Data['data'])):
+            self.load_data(self.Data['data'][x])
+       
+        with open('./Dataset/SquadParsed.csv', 'w', newline='') as csvfile:
+            fieldnames = ['Context', 'Sentence', 'Question', 'Answer']
+            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+            writer.writeheader()
+            while not Output.empty():
+                data = Output.get()
+                writer.writerow({'Context': data[0], 'Sentence': data[1], 'Question': data[2], 'Answer': data[3]})
+                                
     def __getitem__(self, idx):
-        self.length = self.question.shape[0]
-        return self.context, self.sentence, self.question, self.answer
+
+        context = list()
+        sentence = list()
+        question = list()
+        answer = list()
+
+        tmp, Flag = preProcessTask(self.Data, idx, Max_val)
+        if(Flag):
+            tmp, Flag = preProcessTask(self.Data, idx+1, Max_val)
+            if(Flag):
+                tmp, Flag = preProcessTask(self.Data, idx-1, Max_val)
+
+        for c, s, q, a in tmp:
+            context.append(c)
+            sentence.append(s)
+            question.append(q)
+            answer.append(a)
+        c = torch.cat(c, dim=0)
+        s = torch.cat(c, dim=0)
+        q = torch.cat(c, dim=0)
+        a = torch.cat(c, dim=0)
 
     def __len__(self):
-        return self.length
+        return len(self.Data['data'])
+    
+    def threadTaskLoadData(self, obj):
+        context, qas =- obj
+        for qa in range(len(qas)):
+            answers = qas[qa]['answers']
+            question = qas[qa]['question']
+            imposobru = qas[qa]['is_impossible']
+            if(not imposobru):
+                for ans in range(len(answers)):
+                    answer_start = answers[ans]['answer_start']
+                    answer_text =  answers[ans]['text']
+                    sentence = ''
+                    for sent in ctx_sents:
+                        if(' '.join(answer_text) in sent):
+                            sentence = sent
+                            break
+                    if(sentence != ''):
+                        Output.put([context, sentence, question, answer_text])
 
+    def load_data(self, data):          
+        paragraphs = data['paragraphs']
+        with Pool(processes=6) as pool:
+            pool.map_async(self.threadTaskLoadData, [[paragraphs[context_qas]['context'], paragraphs[context_qas]['qas']] for context_qas in range(len(paragraphs))], 2)
+            pool.close()
+            pool.join()
+            pool.terminate()
 
 def train():
-    dataset = SquadDataVecDataset()
+    dataset = SquadDataVecDataset(SquadTrainJson)
+    TrainDataLoader = torch.utils.data.DataLoader(dataset, batch_size=64, shuffle=True)
+    content_criterion = nn.MSELoss()
+    model = SentenceGenerator()
+
+    #for epoch in range(1):
+        #for i, data in enumerate(TrainDataLoader):
+        #    input = data
+
+
+
+    return
+    
+
+def test():
+    dataset = SquadDataVecDataset(SquadTestJson)
     TrainDataLoader = torch.utils.data.DataLoader(dataset, batch_size=64, shuffle=True)
     content_criterion = nn.MSELoss()
     model = SentenceGenerator()
@@ -235,8 +256,4 @@ def train():
 
 
     return
-    
-
-def test():
-    pass
 

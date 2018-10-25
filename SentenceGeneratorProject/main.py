@@ -7,7 +7,8 @@ import os
 import sys
 import argparse
 import torch
-
+import nltk
+#import multiprocessing
 parser = argparse.ArgumentParser()
 GeneratorDevice = torch.device('cpu')
 DiscriminatorDevice = torch.device('cpu')
@@ -82,6 +83,12 @@ import trainer
 
 
 if __name__ == "__main__":
+    #multiprocessing.freeze_support()
+    nltk.download('averaged_perceptron_tagger')
+    nltk.download('tagsets')
+    nltk.download('punkt')
+    nltk.download('maxent_ne_chunker')
+    nltk.download('words')
     trainer.train()
     
-    #exit(0)
+    exit(0)

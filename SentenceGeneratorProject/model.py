@@ -8,14 +8,14 @@ from torchtext import vocab
 
 
 class SentenceGenerator(nn.Module):
-    def __init__(self, hidden_state=1, num_layers=2, ):
+    def __init__(self, hidden_state=100, num_layers=2, ):
        
         super(SentenceGenerator, self).__init__()
-        self.bi_Sentence_rnn_encoder = torch.nn.GRU(input_size=600, hidden_state=hidden_state, num_layers=num_layers, batch_first=False, bidirectional=True)
-        self.bi_Paragraph_rnn_encoder = torch.nn.GRU(input_size=1024, hidden_state=hidden_state, num_layers=num_layers, batch_first=False, bidirectional=True)
-        self.rnn_decoder = torch.nn.GRU(input_size=600, hidden_state=hidden_state, num_layer=num_layers, batch_first=False, bidirectional=False)
+        self.bi_Sentence_rnn_encoder = torch.nn.GRU(input_size=600, hidden_size=hidden_state, num_layers=num_layers, batch_first=True, bidirectional=True)
+        self.bi_Paragraph_rnn_encoder = torch.nn.GRU(input_size=1024, hidden_size=hidden_state, num_layers=num_layers, batch_first=True, bidirectional=True)
+        self.rnn_decoder = torch.nn.GRU(input_size=600, hidden_size=hidden_state, num_layers=num_layers, batch_first=True, bidirectional=False)
         self.attention = torch.nn.Softmax()
-        self.linear = torch.nn.linear(600,600)
+        self.linear = torch.nn.Linear(600,600)
 
     def forward(self, context, sentence):
         
