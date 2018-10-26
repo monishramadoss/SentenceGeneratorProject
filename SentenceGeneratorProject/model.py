@@ -7,25 +7,53 @@ import torch.nn.functional as F
 from torchtext import vocab
 
 
-class SentenceGenerator(nn.Module):
-    def __init__(self, hidden_state=100, num_layers=2, ):
+class Encoder(nn.Module):
+    def __init__(self, input_size, hidden_size):
+        super(Encoder,self).__init__() 
+        self.hidden_size = hidden_size
+        self.embedding  = nn.Embedding(input_size, hidden_size)
+        self.rnn = nn.GRU(input_size=input_size, hidden_size=hidden_size)
        
-        super(SentenceGenerator, self).__init__()
-        self.bi_Sentence_rnn_encoder = torch.nn.GRU(input_size=600, hidden_size=hidden_state, num_layers=num_layers, batch_first=True, bidirectional=True)
-        self.bi_Paragraph_rnn_encoder = torch.nn.GRU(input_size=1024, hidden_size=hidden_state, num_layers=num_layers, batch_first=True, bidirectional=True)
-        self.rnn_decoder = torch.nn.GRU(input_size=600, hidden_size=hidden_state, num_layers=num_layers, batch_first=True, bidirectional=False)
-        self.attention = torch.nn.Softmax()
-        self.linear = torch.nn.Linear(600,600)
+    def forward(self, input, hidden):
+        #embedding = self.embedding(input).view(1, 1, -1)
+        output = input #embedding 
+        output, hidden = self.rnn(output, hidden)
+        return output, hidden
 
-    def forward(self, context, sentence):
-        
-        Context_featureMap = self.bi_Paragraph_rnn_encoder(context)
-        Sentence_featureMap = self.bi_Sentence_rnn_encoder(sentence)
-        attention = self.attention(self.linear(Sentence_featureMap))
+    def initHidden(self):
+        return torch.zeros(1, 1, self.hidden_size)
 
-        Sentence_Context_fedatureMap = torch.cat((Context_featureMap, Sentence_featureMap), dim=0)
-        
-        Question_Decoding = self.rnn_decoder(Sentence_Context_fedatureMap)
-        return Question_Decoding
+
+
+
+class Decoder(nn.Module):
+    def __init__(self, hidden_size, output_size, drouput_p=0.3, max_len = 32):
+        super(Decoder, self).__init__()
+        self.hidden_size = hidden_size
+
+        self.embedding = nn.Embedding(output_size, hidden_size)
+        self.attn = nn.Linear(hidden_size * 2, max_len)
+        self.attn_combine = nn.Linear(hidden_size * 2, hidden_size)
+        self.dropout = nn.Dropout(drouput_p)
+        self.rnn = nn.GRU(hidden_size, hidden_size)
+        self.out = nn.Linear(hidden_size, output_size)
+
+    def forward(self, input, hidden, encoder_output):
+       embedding = self.embedding(input).view(1, 1, -1)
+       embedding = self.dropout(embedding)
+       attn_weight = F.softmax(self.attn(torch.cat((embedding[0], hidden[0]), 1)), dim=1)
+       attn_applied = torch.bmm(attn_weight.unsqueeze(0), encoder_output.unsqueeze(0))
+
+       output = torch.cat((embedding[0], attn_applied[0]), 1)
+       output = self.attn_combine(output).unsqueeze(0)
+
+       output = F.relu(output)
+       output, hidden = self.gru(output, hidden)
+
+       output = F.log_softmax(self.out(output[0]) , dim=1)
+       return output, hidden, attn_weights
+
+    def initHidden(self):
+        return torch.zeros(1, 1, self.hidden_size)
 
 

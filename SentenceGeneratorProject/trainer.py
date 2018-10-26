@@ -1,7 +1,7 @@
 import torch
 import progressbar
 import torch.nn as nn
-import torch.optim as ophim
+import torch.optim as optim
 import torch.nn.init as init
 import torch.nn.functional as F
 from nltk.tag import StanfordNERTagger
@@ -14,10 +14,13 @@ import sys
 import os
 import numpy as np
 import json
-from multiprocessing import Pool, Queue
+import multiprocessing
+from multiprocessing import Pool
+from multiprocessing import Queue as PQueue
+from queue import Queue
 import urllib.request
 import csv
-from model import SentenceGenerator
+import model
 
 parser = main.parser
 GeneratorDevice = main.GeneratorDevice
@@ -29,7 +32,7 @@ dtype = torch.float32
 args, unknown = parser.parse_known_args()
 DataFolder = args.input
 batchSize = args.batchsize
-model = args.model
+model_type = args.model
 Scale = args.Scale
 DeviceConfig = args.deviceConfig
 gan = args.gan
@@ -39,7 +42,8 @@ testData = args.testData
 dtype = torch.float32
 Max_val = 0
 glove = vocab.GloVe(name='840B', dim=300)
-Output = Queue()
+
+
 
 
 SquadTrainJson = './Dataset/train-v2.0.json'
@@ -66,177 +70,208 @@ def get_word_from_vec(vec, n=10):
     all_dists = [(w,torch.dist(vec, get_glove_vec(w))) for w in glove.itos]
     return sorted(all_dist, key=lambda t: t[1])[:n]
 
-def preProcessTask(Data, title, Max_val):
-    TData = Data['data'][title]
-    paragraphs = TData['paragraphs']
-    Output = list()
-    imposobru = False
-    for context_qas in range(len(paragraphs)):
-        Tags = torch.zeros(ContextLength, 36)
-        Context = torch.zeros(ContextLength, 300)
-        ctx = paragraphs[context_qas]['context']
-        ctx_sents = ctx.split(r'.')
-        context =  nltk.word_tokenize(ctx)
-        for x in range(len(context)):
-            Context[x] = get_glove_vec(context[x])                
-        t = nltk.pos_tag(context)
-        tagged = [tags[x[1]] if x[1] in tags.keys() else 36 for x in nltk.pos_tag(context)  ]        
-        
-        for x in range(len(tagged)):
-            tmp = tagged[x]
-            if(tmp != 36 ):
-                Tags[x][tmp] = 1
+def preProcessTask(obj):
+    context, sentence, question, answer = obj
 
-        nerResult = nltk.ne_chunk(nltk.pos_tag(context))
-        bioTagged = list()
-        prevTag = 0      
-            
-        Context = torch.cat((Context,Tags), dim=1)
-        
-        if(Max_val < len(context)):
-            Max_val = len(context)
+    Context = torch.zeros(ContextLength, 300)
+    Sentence = torch.zeros(SentenceLength, 300)
+    Question = torch.zeros(QuestionLength, 300)
+    Answer = torch.zeros(AnswerLength, 300)
+    Tags_Context = torch.zeros(ContextLength, 36)
+    Tags_Sentence = torch.zeros(SentenceLength, 36)
+    Tags_Question = torch.zeros(QuestionLength, 36)
+    Tags_Answer = torch.zeros(AnswerLength, 36)
 
-        qas = paragraphs[context_qas]['qas']
-        for qa in range(len(qas)):
-            Question = torch.zeros(QuestionLength,300)
-            Tags = torch.zeros(QuestionLength, 36)
 
-            question = nltk.word_tokenize(qas[qa]['question'])
-            tagged = [tags[x[1]] if x[1] in tags.keys() else 36 for x in nltk.pos_tag(question)  ]        
 
-            for x in range(len(question)):
-                try:
-                    Question[x] = get_glove_vec(question[x])                
-                except:
-                    break
+    context =  nltk.word_tokenize(context)
+    for x in range(len(context)):
+        if(x < ContextLength):
+            Context[x] = get_glove_vec(context[x])
+    tagged = list()
+    for x in nltk.pos_tag(context):
+        if(x[1] in tags.keys() and len(tagged) < ContextLength):
+            tagged.append(tags[x[1]])
+        else:
+            tagged.append(36)
+    for x in range(len(tagged)):
+        tmp = tagged[x]
+        if(tmp != 36 ):
+            Tags_Context[x][tmp] = 1
+    Context = torch.cat((Context, Tags_Context), dim=1)
 
-            for x in range(len(tagged)):
-                try:
-                    tmp = tagged[x]
-                    if(tmp != 36 ):
-                        Tags[x][tmp] = 1
-                except:
-                    pass
 
-            Question = torch.cat((Question, Tags), dim=1)
 
-            answers = qas[qa]['answers']
-            imposobru = qas[qa]['is_impossible']
-            sentence = ""
-            Sentence = torch.zeros(SentenceLength, 300)
-            Tags = torch.zeros(SentenceLength, 36)
-            if(not imposobru):
-                for ans in range(len(answers)):
-                    Answer = torch.zeros(AnswerLength, 300)
-                    answer_start = answers[ans]['answer_start']
-                    answer_text = answers[ans]['text'].split(r' ')
-                    
-                    for sent in ctx_sents:
-                        if(' '.join(answer_text) in sent):
-                            sentence = nltk.word_tokenize(sent)
-                            for x in range(len(sentence)):
-                                try:
-                                    Sentence[x]= get_glove_vec(sentence[x])
-                                except:
-                                    break
+    sentence = nltk.word_tokenize(sentence)
+    for x in range(len(sentence)):
+        if(x < SentenceLength):
+            Sentence[x] = get_glove_vec(sentence[x])
+    tagged = list()
+    for x in nltk.pos_tag(sentence):
+        if(x[1] in tags.keys() and len(tagged) < SentenceLength):
+            tagged.append(tags[x[1]])
+        else:
+            tagged.append(36)
+    for x in range(len(tagged)):
+        tmp = tagged[x]
+        if(tmp != 36 ):
+            Tags_Sentence[x][tmp] = 1
+    Sentence = torch.cat((Sentence, Tags_Sentence), dim=1)
 
-                            tagged = [tags[x[1]] if x[1] in tags.keys() else 36 for x in nltk.pos_tag(sentence)]    
-                            for x in range(len(tagged)):
-                                try:
-                                    tmp = tagged[x]
-                                    if(tmp != 36):
-                                        Tags[x][tmp] = 1                                                                 
-                                except:
-                                    break
-                            Sentence = torch.cat((Sentence, Tags), dim=1)
-                            break 
 
-                    for x in range(len(answer_text)):
-                        try:
-                            Answer[x] = get_glove_vec(answer_text[x])                      
-                        except:
-                            break
-                    if(Sentence.shape[1] == 336 ):
-                        Output.append((Context, Sentence, Question, Answer))    
 
-    return (Output, imposobru)
+    question = nltk.word_tokenize(question)
+    for x in range(len(question)):
+        if(x < QuestionLength):
+            Question[x] = get_glove_vec(question[x])
+    tagged = list()
+    for x in nltk.pos_tag(question):
+        if(x[1] in tags.keys() and len(tagged) < QuestionLength):
+            tagged.append(tags[x[1]])
+        else:
+            tagged.append(36)
+    for x in range(len(tagged)):
+        tmp = tagged[x]
+        if(tmp != 36 ):
+            Tags_Question[x][tmp] = 1
+    Question = torch.cat((Question, Tags_Question), dim=1)
+    
+
+    
+    answer = nltk.word_tokenize(answer)
+    for x in range(len(answer)):
+        if(x < AnswerLength):
+            Answer[x] = get_glove_vec(answer[x])
+    tagged = list()
+    for x in nltk.pos_tag(answer):
+        if(x[1] in tags.keys() and len(tagged) < AnswerLength):
+            tagged.append(tags[x[1]])
+        else:
+            tagged.append(36)
+    for x in range(len(tagged)):
+        tmp = tagged[x]
+        if(tmp != 36 ):
+            Tags_Answer[x][tmp] = 1
+    Answer = torch.cat((Answer, Tags_Answer), dim=1)
+
+
+    return Context, Sentence, Question, Answer
 
 
 class SquadDataVecDataset(torch.utils.data.Dataset):
     def __init__(self, filename):
         self.Data = json.load(open(filename))       
-        for x in range(len(self.Data['data'])):
-            self.load_data(self.Data['data'][x])
-       
-        with open('./Dataset/SquadParsed.csv', 'w', newline='') as csvfile:
-            fieldnames = ['Context', 'Sentence', 'Question', 'Answer']
-            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-            writer.writeheader()
-            while not Output.empty():
-                data = Output.get()
-                writer.writerow({'Context': data[0], 'Sentence': data[1], 'Question': data[2], 'Answer': data[3]})
-                                
+        self.Output = list() #PQueue()
+        
+
+        if(not os.path.exists('./Dataset/SquadParsed.csv')):
+            for x in range(len(self.Data['data'])):
+                self.load_data(self.Data['data'][x])
+        
+            with open('./Dataset/SquadParsed.csv', 'w', newline='', encoding="utf-8") as csvfile:
+                fieldnames = ['Context', 'Sentence', 'Question', 'Answer']
+                writer = csv.writer(csvfile, delimiter=' ', quotechar='|', quoting=csv.QUOTE_MINIMAL)
+                for x in range(len(self.Output)):
+                    data = self.Output[x]
+                    writer.writerow(data)
+
+        else:
+            with open('./Dataset/SquadParsed.csv','r', newline='', encoding="utf-8") as csvfile:
+                reader = csv.reader(csvfile, delimiter=' ', quotechar='|', quoting=csv.QUOTE_MINIMAL)
+                for row in reader:
+                    self.Output.append(row)
+
     def __getitem__(self, idx):
-
-        context = list()
-        sentence = list()
-        question = list()
-        answer = list()
-
-        tmp, Flag = preProcessTask(self.Data, idx, Max_val)
-        if(Flag):
-            tmp, Flag = preProcessTask(self.Data, idx+1, Max_val)
-            if(Flag):
-                tmp, Flag = preProcessTask(self.Data, idx-1, Max_val)
-
-        for c, s, q, a in tmp:
-            context.append(c)
-            sentence.append(s)
-            question.append(q)
-            answer.append(a)
-        c = torch.cat(c, dim=0)
-        s = torch.cat(c, dim=0)
-        q = torch.cat(c, dim=0)
-        a = torch.cat(c, dim=0)
+        return preProcessTask(self.Output[idx])
+       
 
     def __len__(self):
         return len(self.Data['data'])
-    
-    def threadTaskLoadData(self, obj):
-        context, qas =- obj
-        for qa in range(len(qas)):
-            answers = qas[qa]['answers']
-            question = qas[qa]['question']
-            imposobru = qas[qa]['is_impossible']
-            if(not imposobru):
-                for ans in range(len(answers)):
-                    answer_start = answers[ans]['answer_start']
-                    answer_text =  answers[ans]['text']
-                    sentence = ''
-                    for sent in ctx_sents:
-                        if(' '.join(answer_text) in sent):
-                            sentence = sent
-                            break
-                    if(sentence != ''):
-                        Output.put([context, sentence, question, answer_text])
 
     def load_data(self, data):          
         paragraphs = data['paragraphs']
-        with Pool(processes=6) as pool:
-            pool.map_async(self.threadTaskLoadData, [[paragraphs[context_qas]['context'], paragraphs[context_qas]['qas']] for context_qas in range(len(paragraphs))], 2)
-            pool.close()
-            pool.join()
-            pool.terminate()
+        for context_qas in range(len(paragraphs)):
+            context = paragraphs[context_qas]['context']
+            qas = paragraphs[context_qas]['qas']
+            ctx_sents = paragraphs[context_qas]['context'].split(r'.')
+            for qa in range(len(qas)):
+                answers = qas[qa]['answers']
+                question = qas[qa]['question']
+                imposobru = qas[qa]['is_impossible']
+                if(not imposobru):
+                    for ans in range(len(answers)):
+                        answer_start = answers[ans]['answer_start']
+                        answer_text = answers[ans]['text']
+                        sentence = ''
+                        for sent in ctx_sents:
+                            if(answer_text in sent):
+                                sentence = sent
+                                break
+                        if(sentence != ''):
+                            tmp = (context, sentence, question, answer_text)
+                            self.Output.append(tmp)
+      
+    
+def Trainer(input_tensor, target_tensor, encoder, decoder, encoder_optimizer, decoder_optimizer, criterion, max_length=32):
+    encoder_hidden = encoder.initHidden()
+    encoder_optimizer.zero_grad()
+    decoder_optimizer.zero_grad()
+    SOS_token = 0
+
+    input_length = input_tensor.shape[0]
+    target_length = target_tensor.shape[0]
+
+    encoder_outputs = torch.zeros(max_length, encoder.hidden_size)
+    loss = 0
+    for ei in range(input_length):
+        encoder_output, encoder_hidden = encoder(input_tensor[ei], encoder_hidden)
+        encoder_outputs[ei] = encoder_output[0, 0]
+
+    decoder_input = torch.tensor([[SOS_token]])
+    decoder_hidden = encoder_hidden
+
+    use_target = True if random.random() < 0.5 else False
+
+    if(use_target):
+        for di in range(target_length):
+            decoder_output, decoder_hidden, decoder_attention = decoder(decoder_input, decoder_hidden, encoder_outputs)
+            loss += criterion(decoder_output, target_tensor[di])
+            decoder_input = target_tensor[di]
+
+    else:
+        for di in range(target_length):
+            decoder_output, decoder_hidden, decoder_attention = decoder(decoder_input, decoder_hidden, encoder_outputs)
+            topv, topi = decoder_output.topk(1)
+            decoder_input = topi.squeeze().detach()
+            loss += criterion(decoder_output, target_tensor[di])
+
+    loss.backward()
+
+    encoder_optimizer.step()
+    decoder_optimizer.step()
+
+    return loss.item()/target_length
 
 def train():
-    dataset = SquadDataVecDataset(SquadTrainJson)
-    TrainDataLoader = torch.utils.data.DataLoader(dataset, batch_size=64, shuffle=True)
-    content_criterion = nn.MSELoss()
-    model = SentenceGenerator()
+    dataset = SquadDataVecDataset(SquadTestJson)
+    TrainerDataLoader = torch.utils.data.DataLoader(dataset, batch_size = 1, shuffle=True)
+    paragraph_encoder = model.Encoder(336, 512)
+    sentence_encoder = model.Encoder(336, 512)    
+    decoder = model.Decoder(512, QuestionLength)
 
-    #for epoch in range(1):
-        #for i, data in enumerate(TrainDataLoader):
-        #    input = data
+    criterion = nn.NLLLoss()
+    
+    paragraph_encoder_optimizer = optim.SGD(paragraph_encoder.parameters(), lr=0.01)
+    sentence_encoder_optimizer = optim.SGD(sentence_encoder.parameters(), lr=0.01)
+    decoder_optimizer = optim.SGD(decoder.parameters(), lr=0.01)
+
+    for epoch in range(10):
+        for i, data in enumerate(TrainerDataLoader):
+            context = data[0]
+            sentence = data[1]
+            target = data[2]
+
+            loss = Trainer(sentence, target, sentence_encoder, decoder, sentence_encoder_optimizer, decoder_optimizer, criterion )
 
 
 
@@ -251,8 +286,10 @@ def test():
 
     for epoch in range(10):
         for i, data in enumerate(TrainDataLoader):
-            input = data
-
+            context = data[0]
+            sentence = data[1]
+            criterion = nn.NLLLoss()
+            output = model(context, sentence)
 
 
     return
